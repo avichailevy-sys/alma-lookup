@@ -3,9 +3,9 @@ import pandas as pd
 import streamlit as st
 
 # -----------------------------
-# Config
+# Config (repo files)
 # -----------------------------
-DEFAULT_CHILD_PARENT_XLSX = Path("CHILD PARENT ALMA.xlsx")
+CHILD_PARENT_XLSX = Path("CHILD PARENT ALMA.xlsx")
 PARENT_SEPARATOR = "|||"
 
 GENIZA_LIST_FILE = Path("NLI_GNIZA_ALMAs.list")
@@ -41,7 +41,7 @@ def load_graph(xlsx_path: str):
     """
     df = pd.read_excel(xlsx_path, dtype=str, engine="openpyxl").fillna("")
 
-    # Find columns robustly
+    # Find columns robustly (headers contain 'child'/'parent')
     child_col_candidates = [c for c in df.columns if "child" in c.lower()]
     parent_col_candidates = [c for c in df.columns if "parent" in c.lower()]
 
@@ -69,9 +69,7 @@ def load_graph(xlsx_path: str):
             parts = [p.strip() for p in parent_field.split(PARENT_SEPARATOR)]
             parents = [clean_id(p) for p in parts if clean_id(p)]
 
-        if child not in child_to_parents:
-            child_to_parents[child] = set()
-
+        child_to_parents.setdefault(child, set())
         for p in parents:
             child_to_parents[child].add(p)
             parent_to_children.setdefault(p, set()).add(child)
@@ -115,25 +113,30 @@ st.write(
     "\n*(A record may be both a child and a parent.)*"
 )
 
-with st.sidebar:
-    st.header("Data file")
-    uploaded = st.file_uploader("Upload CHILD PARENT ALMA.xlsx (optional)", type=["xlsx"])
+# Hard requirement: files must be present in repo
+missing = []
+if not CHILD_PARENT_XLSX.exists():
+    missing.append(str(CHILD_PARENT_XLSX))
+if not GENIZA_LIST_FILE.exists():
+    missing.append(str(GENIZA_LIST_FILE))
+if not MANUSCRIPTS_LIST_FILE.exists():
+    missing.append(str(MANUSCRIPTS_LIST_FILE))
 
-    if uploaded is None:
-        xlsx_path = str(DEFAULT_CHILD_PARENT_XLSX)
-    else:
-        tmp_path = Path("uploaded_CHILD_PARENT_ALMA.xlsx")
-        tmp_path.write_bytes(uploaded.read())
-        xlsx_path = str(tmp_path)
+if missing:
+    st.error(
+        "Missing required file(s) in the repository:\n\n- "
+        + "\n- ".join(missing)
+        + "\n\nPlease upload them to the repo (same folder as alma_lookup_app.py) and redeploy."
+    )
+    st.stop()
 
-# Load mappings (silently; spinner is fine)
+# Load data (behind the scenes)
 try:
-    child_to_parents, parent_to_children = load_graph(xlsx_path)
+    child_to_parents, parent_to_children = load_graph(str(CHILD_PARENT_XLSX))
 except Exception as e:
     st.error(f"Failed to load child/parent Excel: {e}")
     st.stop()
 
-# Load list files (silently)
 geniza_ids = load_alma_list(str(GENIZA_LIST_FILE))
 manuscripts_ids = load_alma_list(str(MANUSCRIPTS_LIST_FILE))
 
@@ -144,7 +147,9 @@ if not alma:
     st.caption("Enter an ALMA ID above to see results.")
     st.stop()
 
-# Membership
+# -----------------------------
+# List membership
+# -----------------------------
 in_geniza = alma in geniza_ids
 in_manuscripts = alma in manuscripts_ids
 
@@ -158,9 +163,11 @@ elif in_manuscripts:
 else:
     st.write("❌ GENIZA: **NO**  |  ❌ MANUSCRIPTS: **NO**")
 
+# -----------------------------
+# Parent/child lookup
+# -----------------------------
 col1, col2 = st.columns(2)
 
-# As CHILD → parents
 with col1:
     st.subheader("As CHILD → Parents")
     parents = sorted(child_to_parents.get(alma, set()))
@@ -176,7 +183,6 @@ with col1:
     else:
         st.info("This ALMA does not appear as a child (no parents listed in this table).")
 
-# As PARENT → children
 with col2:
     st.subheader("As PARENT → Children")
     children = sorted(parent_to_children.get(alma, set()))
@@ -196,7 +202,6 @@ st.markdown("---")
 st.subheader("Summary")
 is_child = alma in child_to_parents and len(child_to_parents[alma]) > 0
 is_parent = alma in parent_to_children and len(parent_to_children[alma]) > 0
-
 st.write(
     f"- Appears as **child**: {'✅' if is_child else '❌'}\n"
     f"- Appears as **parent**: {'✅' if is_parent else '❌'}"
