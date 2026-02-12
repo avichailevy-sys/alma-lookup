@@ -84,15 +84,8 @@ st.write(
 
 with st.sidebar:
     st.header("Data file")
-    uploaded = st.file_uploader("Upload CHILD PARENT ALMA.xlsx", type=["xlsx"])
-    if uploaded is None:
-        st.caption(f"Using default path: `{DEFAULT_CHILD_PARENT_XLSX}`")
-        xlsx_path = str(DEFAULT_CHILD_PARENT_XLSX)
-    else:
-        # Streamlit gives a file-like object; save to a temp path in app folder
-        tmp_path = Path("uploaded_CHILD_PARENT_ALMA.xlsx")
-        tmp_path.write_bytes(uploaded.read())
-        xlsx_path = str(tmp_path)
+    st.caption(f"Using default dataset: `{DEFAULT_CHILD_PARENT_XLSX}`")
+    xlsx_path = str(DEFAULT_CHILD_PARENT_XLSX)
 
 try:
     child_col, parent_col, child_to_parents, parent_to_children = load_graph(xlsx_path)
