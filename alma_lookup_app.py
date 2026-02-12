@@ -8,38 +8,53 @@ import streamlit as st
 DEFAULT_CHILD_PARENT_XLSX = Path("CHILD PARENT ALMA.xlsx")
 PARENT_SEPARATOR = "|||"
 
-def clean_id(x: str) -> str:
+GENIZA_LIST_FILE = Path("NLI_GNIZA_ALMAs.list")
+MANUSCRIPTS_LIST_FILE = Path("NLI_MANUSCRIPTS_JPGS_ALMAs_only.list")
+
+
+def clean_id(x) -> str:
     """Normalize ALMA IDs read from Excel/text."""
     if x is None:
         return ""
     s = str(x).strip()
+
     # Remove Excel "force-text" apostrophe if present
     if s.startswith("'"):
         s = s[1:].strip()
-    # Remove spaces inside (sometimes copy/paste inserts them)
-    s = s.replace(" ", "")
+
+    # Remove internal whitespace (copy/paste artifacts)
+    s = s.replace(" ", "").replace("\t", "")
+
+    # Remove RTL marks if present
+    s = s.replace("\u200f", "").replace("\u200e", "")
+
     return s
+
 
 @st.cache_data(show_spinner=True)
 def load_graph(xlsx_path: str):
-    """Load child-parent table, normalize parent lists, and build adjacency maps."""
+    """
+    Load child-parent table, normalize parent lists (split by '|||'),
+    and build adjacency maps:
+      - child_to_parents: child -> set(parents)
+      - parent_to_children: parent -> set(children)
+    """
     df = pd.read_excel(xlsx_path, dtype=str, engine="openpyxl").fillna("")
 
-    # Find columns (robust if headers are slightly different)
+    # Find columns robustly
     child_col_candidates = [c for c in df.columns if "child" in c.lower()]
     parent_col_candidates = [c for c in df.columns if "parent" in c.lower()]
 
     if not child_col_candidates or not parent_col_candidates:
         raise ValueError(
-            f"Couldn't find columns containing 'child' and 'parent'. Found columns: {list(df.columns)}"
+            "Couldn't find columns containing 'child' and 'parent' in the Excel file."
         )
 
     child_col = child_col_candidates[0]
     parent_col = parent_col_candidates[0]
 
-    # Build maps
-    child_to_parents = {}  # child -> set(parents)
-    parent_to_children = {}  # parent -> set(children)
+    child_to_parents: dict[str, set[str]] = {}
+    parent_to_children: dict[str, set[str]] = {}
 
     for _, row in df.iterrows():
         child = clean_id(row[child_col])
@@ -48,25 +63,42 @@ def load_graph(xlsx_path: str):
         if not child:
             continue
 
-        # Split parent field by the delimiter you showed (|||).
-        # Also tolerate cases where it might be empty.
+        # Split multiple parents in one cell
         parents = []
         if parent_field:
             parts = [p.strip() for p in parent_field.split(PARENT_SEPARATOR)]
             parents = [clean_id(p) for p in parts if clean_id(p)]
 
-        # Update child -> parents
         if child not in child_to_parents:
             child_to_parents[child] = set()
+
         for p in parents:
             child_to_parents[child].add(p)
+            parent_to_children.setdefault(p, set()).add(child)
 
-            # Update parent -> children
-            if p not in parent_to_children:
-                parent_to_children[p] = set()
-            parent_to_children[p].add(child)
+    return child_to_parents, parent_to_children
 
-    return child_col, parent_col, child_to_parents, parent_to_children
+
+@st.cache_data(show_spinner=False)
+def load_alma_list(path: str) -> set[str]:
+    """
+    Load a .list file (one ALMA per line) into a set.
+    Ignores empty lines and comment lines starting with #.
+    """
+    p = Path(path)
+    if not p.exists():
+        return set()
+
+    ids: set[str] = set()
+    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            s = clean_id(line)
+            if s:
+                ids.add(s)
+    return ids
 
 
 # -----------------------------
@@ -77,74 +109,97 @@ st.title("ALMA Parent/Child Lookup")
 
 st.write(
     "Enter an **ALMA ID** and get:\n"
-    "1) If it is a **child** → its **parents**\n"
+    "1) If it is a **child** → its **parent(s)**\n"
     "2) If it is a **parent** → its **children**\n"
-    "(It can be both.)"
+    "3) Whether it belongs to the **GENIZA** list and/or **MANUSCRIPTS** list\n"
+    "\n*(A record may be both a child and a parent.)*"
 )
 
 with st.sidebar:
     st.header("Data file")
-    st.caption(f"Using default dataset: `{DEFAULT_CHILD_PARENT_XLSX}`")
-    xlsx_path = str(DEFAULT_CHILD_PARENT_XLSX)
+    uploaded = st.file_uploader("Upload CHILD PARENT ALMA.xlsx (optional)", type=["xlsx"])
 
+    if uploaded is None:
+        xlsx_path = str(DEFAULT_CHILD_PARENT_XLSX)
+    else:
+        tmp_path = Path("uploaded_CHILD_PARENT_ALMA.xlsx")
+        tmp_path.write_bytes(uploaded.read())
+        xlsx_path = str(tmp_path)
+
+# Load mappings (silently; spinner is fine)
 try:
-    child_col, parent_col, child_to_parents, parent_to_children = load_graph(xlsx_path)
+    child_to_parents, parent_to_children = load_graph(xlsx_path)
 except Exception as e:
-    st.error(f"Failed to load file: {e}")
+    st.error(f"Failed to load child/parent Excel: {e}")
     st.stop()
 
-st.success(
-    f"Loaded mapping. Columns detected: child=`{child_col}` | parent=`{parent_col}` | "
-    f"unique children={len(child_to_parents):,} | unique parents={len(parent_to_children):,}"
-)
+# Load list files (silently)
+geniza_ids = load_alma_list(str(GENIZA_LIST_FILE))
+manuscripts_ids = load_alma_list(str(MANUSCRIPTS_LIST_FILE))
 
 alma_in = st.text_input("Enter ALMA ID", placeholder="e.g. 990000907150205000")
 alma = clean_id(alma_in)
 
+if not alma:
+    st.caption("Enter an ALMA ID above to see results.")
+    st.stop()
+
+# Membership
+in_geniza = alma in geniza_ids
+in_manuscripts = alma in manuscripts_ids
+
+st.subheader("List membership")
+if in_geniza and in_manuscripts:
+    st.write("✅ GENIZA: **YES**  |  ✅ MANUSCRIPTS: **YES**")
+elif in_geniza:
+    st.write("✅ GENIZA: **YES**  |  ❌ MANUSCRIPTS: **NO**")
+elif in_manuscripts:
+    st.write("❌ GENIZA: **NO**  |  ✅ MANUSCRIPTS: **YES**")
+else:
+    st.write("❌ GENIZA: **NO**  |  ❌ MANUSCRIPTS: **NO**")
+
 col1, col2 = st.columns(2)
 
-if alma:
-    # CHILD SIDE
-    with col1:
-        st.subheader("As CHILD → Parents")
-        parents = sorted(child_to_parents.get(alma, set()))
-        if parents:
-            st.write(f"**This ALMA appears as a child.** Parents found: **{len(parents)}**")
-            st.code("\n".join(parents))
-            st.download_button(
-                "Download parents as TXT",
-                data=("\n".join(parents) + "\n").encode("utf-8"),
-                file_name=f"{alma}_parents.txt",
-                mime="text/plain",
-            )
-        else:
-            st.info("This ALMA does **not** appear as a child (no parents listed in this table).")
+# As CHILD → parents
+with col1:
+    st.subheader("As CHILD → Parents")
+    parents = sorted(child_to_parents.get(alma, set()))
+    if parents:
+        st.write(f"Parents found: **{len(parents)}**")
+        st.code("\n".join(parents))
+        st.download_button(
+            "Download parents as TXT",
+            data=("\n".join(parents) + "\n").encode("utf-8"),
+            file_name=f"{alma}_parents.txt",
+            mime="text/plain",
+        )
+    else:
+        st.info("This ALMA does not appear as a child (no parents listed in this table).")
 
-    # PARENT SIDE
-    with col2:
-        st.subheader("As PARENT → Children")
-        children = sorted(parent_to_children.get(alma, set()))
-        if children:
-            st.write(f"**This ALMA appears as a parent.** Children found: **{len(children)}**")
-            st.code("\n".join(children))
-            st.download_button(
-                "Download children as TXT",
-                data=("\n".join(children) + "\n").encode("utf-8"),
-                file_name=f"{alma}_children.txt",
-                mime="text/plain",
-            )
-        else:
-            st.info("This ALMA does **not** appear as a parent (no children listed in this table).")
+# As PARENT → children
+with col2:
+    st.subheader("As PARENT → Children")
+    children = sorted(parent_to_children.get(alma, set()))
+    if children:
+        st.write(f"Children found: **{len(children)}**")
+        st.code("\n".join(children))
+        st.download_button(
+            "Download children as TXT",
+            data=("\n".join(children) + "\n").encode("utf-8"),
+            file_name=f"{alma}_children.txt",
+            mime="text/plain",
+        )
+    else:
+        st.info("This ALMA does not appear as a parent (no children listed in this table).")
 
-    # BOTH?
-    is_child = alma in child_to_parents and len(child_to_parents[alma]) > 0
-    is_parent = alma in parent_to_children and len(parent_to_children[alma]) > 0
-    st.markdown("---")
-    st.subheader("Summary")
-    st.write(
-        f"- Appears as **child**: {'✅' if is_child else '❌'}\n"
-        f"- Appears as **parent**: {'✅' if is_parent else '❌'}"
-    )
+st.markdown("---")
+st.subheader("Summary")
+is_child = alma in child_to_parents and len(child_to_parents[alma]) > 0
+is_parent = alma in parent_to_children and len(parent_to_children[alma]) > 0
 
-else:
-    st.caption("Enter an ALMA ID above to see results.")
+st.write(
+    f"- Appears as **child**: {'✅' if is_child else '❌'}\n"
+    f"- Appears as **parent**: {'✅' if is_parent else '❌'}"
+)
+
+
