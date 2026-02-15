@@ -1,3 +1,13 @@
+# alma_catalogue_v1.py
+# V1: ALMA lookup from catalog_index.parquet + two flags:
+#   - Genizah (from NLI_GNIZA_ALMAs.list)
+#   - Role: Parent / Child / Both (from CHILD PARENT ALMA.xlsx)
+#
+# Notes:
+# - We normalize ALMA IDs everywhere by extracting the long digit sequence.
+# - We DO NOT show "Neither"; if not found in the role map we show "—".
+
+import re
 import pandas as pd
 import streamlit as st
 
@@ -5,113 +15,120 @@ CATALOG_PARQUET = "catalog_index.parquet"
 GENIZA_LIST = "NLI_GNIZA_ALMAs.list"
 CHILD_PARENT_XLSX = "CHILD PARENT ALMA.xlsx"
 
+
+# ---------- Normalization ----------
+def extract_alma(x) -> str | None:
+    """
+    Extract the first long digit sequence (ALMA-style) from any input.
+    Returns None if no such sequence is found.
+    """
+    if x is None:
+        return None
+    m = re.search(r"\d{6,}", str(x))
+    return m.group(0) if m else None
+
+
+# ---------- Loaders ----------
 @st.cache_data
-def load_catalog():
+def load_catalog() -> pd.DataFrame:
     df = pd.read_parquet(CATALOG_PARQUET)
+    if "ALMA" not in df.columns:
+        raise ValueError("catalog_index.parquet must contain a column named 'ALMA'")
     df["ALMA"] = df["ALMA"].astype(str).str.strip()
-    return df.drop_duplicates("ALMA").set_index("ALMA")
+    df = df.dropna(subset=["ALMA"]).drop_duplicates(subset=["ALMA"]).set_index("ALMA")
+    return df
+
 
 @st.cache_data
-def load_geniza_set():
+def load_geniza_set() -> set[str]:
     try:
+        out: set[str] = set()
         with open(GENIZA_LIST, "r", encoding="utf-8") as f:
-            return set(line.strip() for line in f if line.strip())
+            for line in f:
+                alma = extract_alma(line)
+                if alma:
+                    out.add(alma)
+        return out
     except FileNotFoundError:
         return set()
 
+
 @st.cache_data
-def load_role_map():
+def load_role_map() -> dict[str, str]:
+    """
+    Build dict: ALMA -> 'Parent' / 'Child' / 'Both' from CHILD PARENT ALMA.xlsx
+    Expected columns (confirmed by user): 'child', 'parent'
+    Parent field may contain multiple parents separated by '|||'.
+    """
     try:
         hp = pd.read_excel(CHILD_PARENT_XLSX, dtype=str)
     except FileNotFoundError:
         return {}
 
-    # Use first column as child, second as parent by default (simple V1)
-    child_col = hp.columns[0]
-    parent_col = hp.columns[1] if len(hp.columns) > 1 else hp.columns[0]
+    if "child" not in hp.columns or "parent" not in hp.columns:
+        # Keep V1 simple: fail loudly so you know the file schema isn't what we expect.
+        raise ValueError(
+            "CHILD PARENT ALMA.xlsx must contain columns named exactly: 'child' and 'parent'"
+        )
 
-    parents_set, children_set = set(), set()
+    parents_set: set[str] = set()
+    children_set: set[str] = set()
 
     for _, row in hp.iterrows():
-        child = str(row.get(child_col, "")).strip()
+        child = extract_alma(row.get("child"))
         if child:
             children_set.add(child)
 
-        parents_raw = str(row.get(parent_col, "")).strip()
-        if parents_raw:
+        parents_raw = row.get("parent")
+        if isinstance(parents_raw, str) and parents_raw.strip():
             for p in parents_raw.split("|||"):
-                p = p.strip()
-                if p:
-                    parents_set.add(p)
+                p2 = extract_alma(p)
+                if p2:
+                    parents_set.add(p2)
 
-    role = {}
+    role: dict[str, str] = {}
     for a in parents_set:
         role[a] = "Parent"
     for a in children_set:
         role[a] = "Both" if a in role else "Child"
     return role
 
-def rights_color(text: str) -> str:
+
+# ---------- Rights indicator (simple V1) ----------
+def rights_icon(text: str) -> str:
     t = (text or "").lower()
-    if "no restrictions" in t or "public domain" in t:
+    if "no restrictions" in t or "public domain" in t or "נחלת הכלל" in (text or "") or "ללא מגבלות" in (text or ""):
         return "🟢"
-    if "contract" in t:
+    if "contract" in t or "attribution" in t:
         return "🟡"
-    if "restricted" in t or "permission" in t:
+    if "restricted" in t or "permission" in t or "אסור" in (text or ""):
         return "🔴"
     return "⚪"
 
-st.set_page_config(page_title="ALMA Catalog V1", layout="wide")
+
+# ---------- App ----------
+st.set_page_config(page_title="ALMA Catalog Viewer — V1", layout="wide")
 st.title("ALMA Catalog Viewer — V1")
 
+# Load data
 catalog = load_catalog()
 geniza = load_geniza_set()
 role_map = load_role_map()
 
-alma = st.text_input("ALMA ID").strip()
+raw = st.text_input("ALMA ID", placeholder="Paste the numeric ALMA ID").strip()
+alma = extract_alma(raw)
+
+if raw and not alma:
+    st.error("No valid numeric ALMA ID detected.")
+    st.stop()
 
 if alma:
     if alma not in catalog.index:
         st.error("Not found in catalog_index.parquet")
-    else:
-        rec = catalog.loc[alma]
+        st.stop()
 
-        title = rec.get("title", "")
-        title_rem = rec.get("title_remainder", "")
-        library = rec.get("library", "")
-        shelfmark = rec.get("shelfmark", "")
-        city = rec.get("city", "")
-        country = rec.get("country", "")
-        rights_note = rec.get("rights_note", "")
-        access_level = rec.get("access_level", "")
-        terms_name = rec.get("terms_name", "")
-        terms_url = rec.get("terms_url", "")
+    rec = catalog.loc[alma]
 
-        is_geniza = alma in geniza
-        role = role_map.get(alma, "Neither")
-
-        c1, c2 = st.columns([2, 1])
-
-        with c1:
-            st.subheader("Description")
-            if title_rem:
-                st.write(f"{title} — {title_rem}")
-            else:
-                st.write(title)
-
-            st.subheader("Holding")
-            st.write(f"Library: {library}")
-            st.write(f"Shelfmark: {shelfmark}")
-            st.write(f"Location: {', '.join([x for x in [city, country] if x])}")
-
-        with c2:
-            st.subheader("Rights")
-            rights_text = " ".join([x for x in [access_level, rights_note] if x])
-            st.write(f"{rights_color(rights_text)} {terms_name or ''}")
-            if terms_url:
-                st.write(terms_url)
-            st.caption(rights_text)
-
-            st.subheader("Flags")
-            st.write(f"Genizah: {'Yes' if is_geniza else 'No'}")
-            st.write(f"Role: {role}")
+    # Columns produced by your parquet build script
+    title = rec.get("title", "") or ""
+    title
