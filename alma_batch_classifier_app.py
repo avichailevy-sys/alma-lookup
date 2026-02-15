@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import pandas as pd
 import streamlit as st
 
@@ -9,52 +10,50 @@ CHILD_PARENT_XLSX = Path("CHILD PARENT ALMA.xlsx")
 GENIZA_LIST_FILE = Path("NLI_GNIZA_ALMAs.list")
 PARENT_SEPARATOR = "|||"
 
+# Extract long digit sequences as ALMA IDs (robust for messy lines)
+ALMA_RE = re.compile(r"\d{8,}")
 
-def clean_id(x) -> str:
-    if x is None:
+
+def clean_line(s: str) -> str:
+    """Light cleanup for weird invisible chars; keep it simple."""
+    if s is None:
         return ""
-    s = str(x).strip()
-    if s.startswith("'"):
-        s = s[1:].strip()
-    s = s.replace(" ", "").replace("\t", "")
+    s = str(s)
     s = s.replace("\u200f", "").replace("\u200e", "")  # RTL marks
-    return s
+    s = s.replace("\ufeff", "")  # BOM
+    return s.strip()
 
 
-def parse_txt_ids(file_bytes: bytes) -> list[str]:
-    """
-    Parse uploaded TXT: one ALMA per line.
-    - Ignores empty lines and lines starting with '#'
-    - Deduplicates while preserving order
-    """
-    text = file_bytes.decode("utf-8", errors="ignore")
+def extract_almas_from_text(text: str) -> list[str]:
+    """Extract ALMA-like digit sequences from a text blob, preserving order and deduping."""
     seen = set()
     ordered = []
     for line in text.splitlines():
-        line = line.strip()
+        line = clean_line(line)
         if not line or line.startswith("#"):
             continue
-        alma = clean_id(line)
-        if alma and alma not in seen:
-            seen.add(alma)
-            ordered.append(alma)
+        for m in ALMA_RE.findall(line):
+            if m not in seen:
+                seen.add(m)
+                ordered.append(m)
     return ordered
+
+
+def parse_uploaded_txt(file_bytes: bytes) -> list[str]:
+    """Parse uploaded TXT and extract ALMA IDs robustly."""
+    text = file_bytes.decode("utf-8", errors="ignore")
+    return extract_almas_from_text(text)
 
 
 @st.cache_data(show_spinner=True)
 def load_geniza_set() -> set[str]:
+    """Load GENIZA list and extract ALMA IDs robustly."""
     if not GENIZA_LIST_FILE.exists():
         raise FileNotFoundError(f"Missing file in repo: {GENIZA_LIST_FILE}")
-    ids = set()
-    with open(GENIZA_LIST_FILE, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            s = clean_id(line)
-            if s:
-                ids.add(s)
-    return ids
+
+    text = GENIZA_LIST_FILE.read_text(encoding="utf-8", errors="ignore")
+    almas = extract_almas_from_text(text)
+    return set(almas)
 
 
 @st.cache_data(show_spinner=True)
@@ -63,6 +62,7 @@ def load_graph() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     Build:
       child_to_parents: child -> set(parents)
       parent_to_children: parent -> set(children)
+    Parent field may contain multiple parents separated by '|||'.
     """
     if not CHILD_PARENT_XLSX.exists():
         raise FileNotFoundError(f"Missing file in repo: {CHILD_PARENT_XLSX}")
@@ -81,15 +81,25 @@ def load_graph() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     parent_to_children: dict[str, set[str]] = {}
 
     for _, row in df.iterrows():
-        child = clean_id(row[child_col])
-        parent_field = str(row[parent_col] or "").strip()
-        if not child:
+        child_raw = clean_line(row[child_col])
+        if not child_raw:
             continue
 
-        parents = []
+        # Extract a child ALMA (first long digit sequence)
+        child_ids = ALMA_RE.findall(child_raw)
+        if not child_ids:
+            continue
+        child = child_ids[0]
+
+        parent_field = clean_line(row[parent_col])
+        parents: list[str] = []
+
         if parent_field:
-            parts = [p.strip() for p in parent_field.split(PARENT_SEPARATOR)]
-            parents = [clean_id(p) for p in parts if clean_id(p)]
+            # Split by delimiter, then extract ALMA digits from each part (robust)
+            parts = [clean_line(p) for p in parent_field.split(PARENT_SEPARATOR)]
+            for part in parts:
+                for pid in ALMA_RE.findall(part):
+                    parents.append(pid)
 
         child_to_parents.setdefault(child, set())
         for p in parents:
@@ -106,17 +116,16 @@ def to_txt(ids: list[str]) -> bytes:
 # -----------------------------
 # UI
 # -----------------------------
-st.set_page_config(page_title="ALMA Batch Classifier", layout="wide")
-st.title("ALMA Batch Classifier")
+st.set_page_config(page_title="Batch ALMA Classifier", layout="wide")
+st.title("Batch ALMA Classifier")
 
 st.write(
-    "Upload a TXT file with **one ALMA ID per line**.\n\n"
-    "The app will return:\n"
+    "Upload a TXT file with ALMA IDs (one per line). The app will return:\n"
     "- **GENIZAH** vs **NOT GENIZAH**\n"
-    "- Role lists: **parents only**, **children & parents**, **children only**"
+    "- Hierarchy roles: **parents only**, **children & parents**, **children only**\n"
 )
 
-# Hard requirement: repo files must exist
+# Check required repo files exist
 missing = []
 if not GENIZA_LIST_FILE.exists():
     missing.append(str(GENIZA_LIST_FILE))
@@ -131,7 +140,7 @@ if missing:
     )
     st.stop()
 
-# Load background data (silent aside from the spinner)
+# Load background data
 try:
     geniza_set = load_geniza_set()
     child_to_parents, parent_to_children = load_graph()
@@ -144,7 +153,7 @@ if uploaded is None:
     st.caption("Upload a .txt file to continue.")
     st.stop()
 
-ids = parse_txt_ids(uploaded.getvalue())
+ids = parse_uploaded_txt(uploaded.getvalue())
 if not ids:
     st.error("No valid ALMA IDs found in the uploaded file.")
     st.stop()
@@ -198,7 +207,6 @@ for a in ids:
     # If neither, we intentionally ignore (per your request)
 
 st.subheader("Hierarchy roles")
-
 r1, r2, r3 = st.columns(3)
 
 with r1:
