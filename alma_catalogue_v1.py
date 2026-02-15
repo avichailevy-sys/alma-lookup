@@ -11,9 +11,9 @@ import re
 import pandas as pd
 import streamlit as st
 
-CATALOG_PARQUET = "catalog_index.parquet"
-GENIZA_LIST = "NLI_GNIZA_ALMAs.list"
-CHILD_PARENT_XLSX = "CHILD PARENT ALMA.xlsx"
+CATALOG_PARQUET = "../catalog_index.parquet"
+GENIZA_LIST = "../NLI_GNIZA_ALMAs.list"
+CHILD_PARENT_XLSX = "../CHILD PARENT ALMA.xlsx"
 
 
 # ---------- Normalization ----------
@@ -132,3 +132,4 @@ if alma:
     # Columns produced by your parquet build script
     title = rec.get("title", "") or ""
     title
+
