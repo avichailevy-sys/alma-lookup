@@ -1,4 +1,4 @@
-# import re
+import re
 import pandas as pd
 import streamlit as st
 
@@ -138,4 +138,42 @@ if alma:
     shelfmark = rec.get("shelfmark", "")
     city = rec.get("city", "")
     country = rec.get("country", "")
-    rights_note = rec.get("rights_
+    rights_note = rec.get("rights_note", "")
+    access_level = rec.get("access_level", "")
+
+    # Flags
+    is_geniza = alma in geniza
+    role = role_map.get(alma, "—")
+
+    col1, col2 = st.columns([2, 1])
+
+    # ---------- Left column ----------
+    with col1:
+        st.subheader("Description")
+        if title_rem:
+            st.write(f"**{title}** — {title_rem}")
+        else:
+            st.write(title or "—")
+
+        st.subheader("Holding")
+        st.write(f"Library: {library or '—'}")
+        st.write(f"Shelfmark: {shelfmark or '—'}")
+        location = ", ".join([x for x in [city, country] if x])
+        st.write(f"Location: {location or '—'}")
+
+    # ---------- Right column ----------
+    with col2:
+        st.subheader("Rights")
+
+        badge, label, details = rights_status(access_level, rights_note)
+        st.write(f"{badge} **{label}**")
+
+        # Optional detailed text
+        if details:
+            with st.expander("Show rights details"):
+                st.write(details)
+
+        st.subheader("Flags")
+        st.write(f"Genizah: {'Yes' if is_geniza else 'No'}")
+        st.write(f"Role: {role}")
+
