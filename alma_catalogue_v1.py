@@ -3,9 +3,9 @@ import pandas as pd
 import streamlit as st
 
 # Paths (app runs from alma-lookup/main/)
-CATALOG_PARQUET = "../catalog_index.parquet"
-GENIZA_LIST = "../NLI_GNIZA_ALMAs.list"
-CHILD_PARENT_XLSX = "../CHILD PARENT ALMA.xlsx"
+CATALOG_PARQUET = "catalog_index.parquet"
+GENIZA_LIST = "NLI_GNIZA_ALMAs.list"
+CHILD_PARENT_XLSX = "CHILD PARENT ALMA.xlsx"
 
 
 # ---------- Utilities ----------
@@ -176,4 +176,5 @@ if alma:
         st.subheader("Flags")
         st.write(f"Genizah: {'Yes' if is_geniza else 'No'}")
         st.write(f"Role: {role}")
+
 
