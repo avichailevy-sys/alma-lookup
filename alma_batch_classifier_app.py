@@ -241,27 +241,38 @@ with r3:
 
 # -----------------------------
 # C) Unique parents derived from submitted children (Daniel’s request)
+#     + complete ALMA → parents mapping for ALL submitted ALMAs
 # -----------------------------
 st.subheader("Unique parents derived from submitted children")
 
-# All submitted IDs that are children (children_only + children_and_parents)
 submitted_children = children_only + children_and_parents
 
 unique_parents = set()
 parent_to_childcount: dict[str, int] = {}
+
+# COMPLETE mapping for ALL submitted ALMAs (even if no parents)
 mapping_rows = []
 
+for a in ids:
+    parents = sorted(child_to_parents.get(a, set()))
+
+    # mapping row always exists
+    mapping_rows.append(
+        {
+            "ALMA": a,
+            "Parents": f" {PARENT_SEPARATOR} ".join(parents) if parents else "",
+        }
+    )
+
+# unique parents + counts computed only from submitted children (the “child workflow”)
 for child in submitted_children:
     parents = sorted(child_to_parents.get(child, set()))
     if not parents:
         continue
 
     unique_parents.update(parents)
-
     for p in parents:
         parent_to_childcount[p] = parent_to_childcount.get(p, 0) + 1
-
-    mapping_rows.append({"Child": child, "Parents": f" {PARENT_SEPARATOR} ".join(parents)})
 
 parents_list = sorted(unique_parents)
 
@@ -287,15 +298,16 @@ if parent_to_childcount:
     )
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
+# Full mapping table (ALL submitted ALMAs)
 if mapping_rows:
-    with st.expander("Show child → parents mapping"):
+    with st.expander("Show ALMA → parents mapping (all submitted ALMAs)"):
         mapping_df = pd.DataFrame(mapping_rows)
         st.dataframe(mapping_df, use_container_width=True, hide_index=True)
 
         st.download_button(
-            "Download CHILD_TO_PARENTS.csv",
+            "Download ALMA_TO_PARENTS.csv",
             data=mapping_df.to_csv(index=False),
-            file_name="CHILD_TO_PARENTS.csv",
+            file_name="ALMA_TO_PARENTS.csv",
             mime="text/csv",
         )
 
