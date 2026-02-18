@@ -2,10 +2,11 @@ import re
 import pandas as pd
 import streamlit as st
 
-# Paths (app runs from alma-lookup/main/)
+# Repo files (same folder as this app)
 CATALOG_PARQUET = "catalog_index.parquet"
 GENIZA_LIST = "NLI_GNIZA_ALMAs.list"
 CHILD_PARENT_XLSX = "CHILD PARENT ALMA.xlsx"
+PARENT_SEPARATOR = "|||"
 
 
 # ---------- Utilities ----------
@@ -41,6 +42,7 @@ def load_geniza_set():
 
 @st.cache_data
 def load_role_map():
+    """Return role map: alma -> Parent / Child / Both (based on hierarchy table)."""
     role = {}
     try:
         hp = pd.read_excel(CHILD_PARENT_XLSX, dtype=str)
@@ -57,7 +59,7 @@ def load_role_map():
 
         parents_raw = row.get("parent")
         if isinstance(parents_raw, str) and parents_raw.strip():
-            for p in parents_raw.split("|||"):
+            for p in parents_raw.split(PARENT_SEPARATOR):
                 p2 = extract_alma(p)
                 if p2:
                     parents.add(p2)
@@ -69,28 +71,16 @@ def load_role_map():
 
     return role
 
-#------- Catalog fields ----------------
-    title = rec.get("title", "")
-    title_rem = rec.get("title_remainder", "")
-    library = rec.get("library", "")
-    shelfmark = rec.get("shelfmark", "")
-    city = rec.get("city", "")
-    country = rec.get("country", "")
-    rights_note = rec.get("rights_note", "")
-    access_level = rec.get("access_level", "")
-    terms_name = rec.get("terms_name", "")  # 939_a (official rights)
 
-# ---------- Rights logic (simplified V1) ----------
-st.subheader("Rights (official)")
+def rights_badge_from_939a(terms_name: str):
+    """V1 rights: based ONLY on 939_a (terms_name)."""
+    official = (terms_name or "").strip()
+    if not official:
+        return "⚪", "No rights label found (939_a missing in index)"
 
-official = (terms_name or "").strip()
-
-if not official:
-    st.write("⚪ **No rights label found (939_a missing in index)**")
-else:
     t = official.lower()
 
-    # Badge color: lightweight heuristics based ONLY on 939_a text
+    # Lightweight badge heuristics (still ONLY reading 939_a text)
     if ("ללא מגבל" in official) or ("no restrictions" in t):
         badge = "🟢"
     elif ("אסור" in official) or ("prohibited" in t) or ("permission" in t):
@@ -98,10 +88,9 @@ else:
     elif ("בלבד" in official) or ("הוראה" in official) or ("מחקר" in official) or ("not permitted" in t):
         badge = "🟡"
     else:
-        badge = "🟡"  # default: conditions likely apply / unclear wording
+        badge = "🟡"
 
-    st.write(f"{badge} **{official}**")
-
+    return badge, official
 
 
 # ---------- App ----------
@@ -119,51 +108,49 @@ if raw and not alma:
     st.error("Please enter a valid numeric ALMA ID.")
     st.stop()
 
-if alma:
-    if alma not in catalog.index:
-        st.error("Not found in catalog_index.parquet")
-        st.stop()
+if not alma:
+    st.caption("Enter an ALMA ID to view record details.")
+    st.stop()
 
-    rec = catalog.loc[alma]
+if alma not in catalog.index:
+    st.error("Not found in catalog_index.parquet")
+    st.stop()
 
-    
-    # Flags
-    is_geniza = alma in geniza
-    role = role_map.get(alma, "—")
+rec = catalog.loc[alma]
 
-    col1, col2 = st.columns([2, 1])
+# ------- Catalog fields (extract AFTER rec exists) -------
+title = rec.get("title", "")
+title_rem = rec.get("title_remainder", "")
+library = rec.get("library", "")
+shelfmark = rec.get("shelfmark", "")
+city = rec.get("city", "")
+country = rec.get("country", "")
+terms_name = rec.get("terms_name", "")  # 939_a (official rights)
 
-    # ---------- Left column ----------
-    with col1:
-        st.subheader("Description")
-        if title_rem:
-            st.write(f"**{title}** — {title_rem}")
-        else:
-            st.write(title or "—")
+# Flags
+is_geniza = alma in geniza
+role = role_map.get(alma, "—")
 
-        st.subheader("Holding")
-        st.write(f"Library: {library or '—'}")
-        st.write(f"Shelfmark: {shelfmark or '—'}")
-        location = ", ".join([x for x in [city, country] if x])
-        st.write(f"Location: {location or '—'}")
+col1, col2 = st.columns([2, 1])
 
-    # ---------- Right column ----------
-    with col2:
-        st.subheader("Rights")
+with col1:
+    st.subheader("Description")
+    if title_rem:
+        st.write(f"**{title}** — {title_rem}")
+    else:
+        st.write(title or "—")
 
-        badge, label, details = rights_status(access_level, rights_note)
-        st.write(f"{badge} **{label}**")
+    st.subheader("Holding")
+    st.write(f"Library: {library or '—'}")
+    st.write(f"Shelfmark: {shelfmark or '—'}")
+    location = ", ".join([x for x in [city, country] if x])
+    st.write(f"Location: {location or '—'}")
 
-        # Optional detailed text
-        if details:
-            with st.expander("Show rights details"):
-                st.write(details)
+with col2:
+    st.subheader("Rights (official)")
+    badge, label = rights_badge_from_939a(terms_name)
+    st.write(f"{badge} **{label}**")
 
-        st.subheader("Flags")
-        st.write(f"Genizah: {'Yes' if is_geniza else 'No'}")
-        st.write(f"Role: {role}")
-
-
-
-
-
+    st.subheader("Flags")
+    st.write(f"Genizah: {'Yes' if is_geniza else 'No'}")
+    st.write(f"Role: {role}")
