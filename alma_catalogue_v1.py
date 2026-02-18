@@ -125,6 +125,8 @@ if alma:
     country = rec.get("country", "")
     rights_note = rec.get("rights_note", "")
     access_level = rec.get("access_level", "")
+    terms_name = rec.get("terms_name", "")  # 939_a (official rights)
+
 
     # Flags
     is_geniza = alma in geniza
@@ -161,6 +163,7 @@ if alma:
         st.subheader("Flags")
         st.write(f"Genizah: {'Yes' if is_geniza else 'No'}")
         st.write(f"Role: {role}")
+
 
 
 
