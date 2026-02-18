@@ -69,6 +69,16 @@ def load_role_map():
 
     return role
 
+#------- Catalog fields ----------------
+    title = rec.get("title", "")
+    title_rem = rec.get("title_remainder", "")
+    library = rec.get("library", "")
+    shelfmark = rec.get("shelfmark", "")
+    city = rec.get("city", "")
+    country = rec.get("country", "")
+    rights_note = rec.get("rights_note", "")
+    access_level = rec.get("access_level", "")
+    terms_name = rec.get("terms_name", "")  # 939_a (official rights)
 
 # ---------- Rights logic (simplified V1) ----------
 st.subheader("Rights (official)")
@@ -116,18 +126,7 @@ if alma:
 
     rec = catalog.loc[alma]
 
-    # Catalog fields
-    title = rec.get("title", "")
-    title_rem = rec.get("title_remainder", "")
-    library = rec.get("library", "")
-    shelfmark = rec.get("shelfmark", "")
-    city = rec.get("city", "")
-    country = rec.get("country", "")
-    rights_note = rec.get("rights_note", "")
-    access_level = rec.get("access_level", "")
-    terms_name = rec.get("terms_name", "")  # 939_a (official rights)
-
-
+    
     # Flags
     is_geniza = alma in geniza
     role = role_map.get(alma, "—")
@@ -163,6 +162,7 @@ if alma:
         st.subheader("Flags")
         st.write(f"Genizah: {'Yes' if is_geniza else 'No'}")
         st.write(f"Role: {role}")
+
 
 
 
