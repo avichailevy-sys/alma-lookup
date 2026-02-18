@@ -71,42 +71,27 @@ def load_role_map():
 
 
 # ---------- Rights logic (simplified V1) ----------
-def rights_status(access_level, rights_note):
-    summary = (access_level or "").strip()
-    details = (rights_note or "").strip()
-    txt = (summary + " " + details).lower()
+st.subheader("Rights (official)")
 
-    if (
-        "no restrictions" in txt
-        or "public domain" in txt
-        or "נחלת הכלל" in txt
-        or "ללא מגבלות" in txt
-    ):
+official = (terms_name or "").strip()
+
+if not official:
+    st.write("⚪ **No rights label found (939_a missing in index)**")
+else:
+    t = official.lower()
+
+    # Badge color: lightweight heuristics based ONLY on 939_a text
+    if ("ללא מגבל" in official) or ("no restrictions" in t):
         badge = "🟢"
-        label = summary or "No restrictions"
-
-    elif (
-        "restricted" in txt
-        or "permission" in txt
-        or "all rights reserved" in txt
-        or "אסור" in txt
-    ):
+    elif ("אסור" in official) or ("prohibited" in t) or ("permission" in t):
         badge = "🔴"
-        label = summary or "Restricted"
-
-    elif (
-        "contract" in txt
-        or "attribution" in txt
-        or "credit" in txt
-    ):
+    elif ("בלבד" in official) or ("הוראה" in official) or ("מחקר" in official) or ("not permitted" in t):
         badge = "🟡"
-        label = summary or "Limited terms"
-
     else:
-        badge = "⚪"
-        label = summary or "Unknown"
+        badge = "🟡"  # default: conditions likely apply / unclear wording
 
-    return badge, label, details
+    st.write(f"{badge} **{official}**")
+
 
 
 # ---------- App ----------
@@ -176,5 +161,6 @@ if alma:
         st.subheader("Flags")
         st.write(f"Genizah: {'Yes' if is_geniza else 'No'}")
         st.write(f"Role: {role}")
+
 
 
